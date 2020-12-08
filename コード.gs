@@ -2,8 +2,9 @@ function main() {
   refreshToken();
   const artists = getFollow();
   const newRelease = getAlbums(artists);
-  if (newRelease[0]) {
-    sendmail(newRelease);
+  const arrangedRelease = arrangeNewRelease(newRelease);
+  if (arrangedRelease) {
+    sendmail(arrangedRelease);
   } else {
     sendmail("");
   }
@@ -81,37 +82,82 @@ function getFollow() {
 function getAlbums(artists) {
   const today = Utilities.formatDate(new Date(), "JST", "yyyy-MM-dd");
   Logger.log("日付：%s", today);
-  var releaseartist = [];
-  var releasealbum = [];
-  var albumimage = [];
+  var releases = [];
   artists.forEach(function(artist) {
-    var newartist = null;
     var pageurl = "https://api.spotify.com/v1/artists/" + artist + "/albums?market=JP&include_groups=album,single,appears_on&limit=50";
     for ( let i = 0; i <= 3 ;i++) {
       if(!pageurl) { break;}
       const response = spotifyAPI(pageurl,"GET","");
       response.items.forEach(function(item) {
-        if (item.release_date == today) {
-          if(!(item.album_group == "appears_on" && item.artists[0].name == ("Various Artists" || "ヴァリアス・アーティスト"))) {
-            newartist = artist;
-            if(!(releasealbum.includes(item.id))) {
-              releasealbum.push(item.id);
-              albumimage.push(item.images[1].url);
-            }
-          }
+        if(item.release_date == today && !(item.album_group == "appears_on" && item.artists[0].name == ("Various Artists" || "ヴァリアス・アーティスト"))) {
+          var releaseAlbum = {
+            "artist":[artist],
+            "album":[{
+              "id":item.id,
+              "imageUrl":item.images[1].url
+            }]
+          };
+          releases.push(releaseAlbum);
         }
       });
-    }
-    if (newartist) {
-      releaseartist.push(newartist);
+      pageurl = response.next;
     }
   });
   Logger.log("All Artists checked.");
-  return [releaseartist,releasealbum,albumimage];
+  return [releases];
+}
+
+function arrangeNewRelease(releases) {
+  releases.sort(function(a,b) { //アルバム順のソート
+    var nameA = a.album.id
+    var nameB = b.album.id
+    if (nameA < nameB) {
+      return -1;
+    }
+    if (nameA > nameB) {
+      return 1;
+    }
+    // names must be equal
+    return 0;
+  });
+  var l = releases.length;
+  for(let i = 0;i <= l-2; i++) {
+    if(releases[i].album.id == releases[i+1].album.id) {　//アルバムが重複している場合に統合
+      releases[i].artist = releases[i].artist.concat(releases[i+1].artist);
+      releases.splice(i+1,1);
+      l -=1; //要素数に合わせてlを1減らす
+      i -=1; //3枚以上のアルバム重複に対応
+    }
+  }
+  releases.sort(function(a,b) { //アーティスト順のソート
+    var nameA = a.artist
+    var nameB = b.artist
+    if (nameA < nameB) {
+      return -1;
+    }
+    if (nameA > nameB) {
+      return 1;
+    }
+    // names must be equal
+    return 0;
+  });
+  var l = releases.length;
+  for(let i = 0;i <= l-2; i++) {
+    if(releases[i].artist == releases[i+1].artist) {　//アーティストが重複している場合に統合
+      releases[i].album = releases[i].album.concat(releases[i+1].album);
+      releases.splice(i+1,1);
+      l -=1; //要素数に合わせてlを1減らす
+      i -=1; //3つ以上のアーティスト重複に対応
+    }
+  }
+  Logger.log("new Release arranged.");
+  Logger.log(releases);
+  return releases;
 }
 
 //アーティスト名を取得する
 function getArtistName(artistIds) {
+  var nameDic = {};
   var ids = [];
   var names = [];
   var count = 0;
@@ -119,19 +165,39 @@ function getArtistName(artistIds) {
     count += 50;
     ids = artistIds.slice(count-50,count).join();
     const response = spotifyAPI("https://api.spotify.com/v1/artists?ids=" + ids,"GET","");
-    response.artists.forEach(t => names.push(t.name));
+    var l = response.artists.length;
+    for (let i = 0; i <= l; i++) {
+      nameDic[ids[i]] = response.artists.name;
+    }
   } while (count <= artistIds.length-1);
   Logger.log("ArtistName got.");
   Logger.log(names);
-  return names;
+  return nameDic;
 }
+
+//アルバム名を取得する
+function getAlbumName(albumIds) {
+  var nameDic = {};
+  var ids = [];
+  var names = [];
+  var count = 0;
+  do {
+    count += 50;
+    ids = albumIds.slice(count-50,count).join();
+    const response = spotifyAPI("https://api.spotify.com/v1/albums?market=JP&ids=" + ids,"GET","");
+    var l = response.albums.length;
+    for (let i = 0; i <= l; i++) {
+      nameDic[ids[i]] = response.albums.name;
+    }
+  } while (count <= albumIds.length-1);
+  Logger.log("AlbumName got.");
+  Logger.log(names);
+  return nameDic;
+}
+
 
 //メールを送る
 function sendmail(newRelease) {
-  const names = getArtistName(newRelease[0]);
-  const albumId = newRelease[1];
-  const imageurl = newRelease[2];
-  
   const recipient = PropertiesService.getScriptProperties().getProperty("mailaddress");
   const subject = "Spotify通知";
   const body = "NewRelease";
@@ -142,29 +208,28 @@ function sendmail(newRelease) {
     MailApp.sendEmail(recipient, subject, message);
     return;
   }
-    
+  var artistIds = [];
+  var albumIds = [];
+  newRelease.forEach(function(release) {
+    artistIds.concat(release.artist);
+    albumIds.concat(release.album);
+  });
+  const artistNameDic = getArtistName(artistIds);
+  const albumNameDic = getAlbumName(albumIds);
+  var description = "";
+  newRelease.forEach(function(release) {
+    var artists = [];
+    var albums = [];
+    var images = "";
+    release.artist.forEach(art => artists.push(artistNameDic[art]));
+    release.album.id.forEach(albId => albums.push(albumNameDic[albId]));
+    release.album.forEach(alb => images += "<a href='https://open.spotify.com/album/" + alb.id + "'><img src='" + alb.imageUrl + "' style='width:30%;'></a>");
+    description += "<br>" + artists.join() + "の『" + albums.join("』,『") + "』<br><div style='float:left;'>" + images + "</div>";
+  });
+  
   const html = HtmlService.createTemplateFromFile('main');
-  var images = "";
-  const l = albumId.length;
-  for (let i = 0; i <= l-1; i++) {
-    images += "<a href='https://open.spotify.com/album/" + albumId[i] + "'><img src='" + imageurl[i] + "' style='width:30%;'></a>";
-  }
   html.date = Utilities.formatDate(new Date(), "JST", "yyyy-MM-dd");
-  html.names = names.join();
-  const output = html.evaluate().append(images).append("</div>").getContent();
+  const output = html.evaluate().append(description).getContent();
   
   MailApp.sendEmail(recipient, subject, body, {htmlBody:output});
-}
-
-
-function test () {
-  var options = {
-    'method' : 'GET',
-    'muteHttpExceptions':true,
-    'contentType':'application/xml; charset=utf-8'
-  };
-  UrlFetchApp.fetch('https://httpbin.org/post', options);
-  var response = UrlFetchApp.fetch("https://drive.google.com/uc?id=1Ob6a1ICuiOKrxgicccb5z18WZ81qUimn");
-  Logger.log(response.getAllHeaders());
-  Logger.log(response);
 }
