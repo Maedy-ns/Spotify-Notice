@@ -104,7 +104,7 @@ function getAlbums(artists) {
     }
   });
   Logger.log("All Artists checked.");
-  return [releases];
+  return releases;
 }
 
 function arrangeNewRelease(releases) {
@@ -122,8 +122,9 @@ function arrangeNewRelease(releases) {
   });
   var l = releases.length;
   for(let i = 0;i <= l-2; i++) {
-    if(releases[i].album.id == releases[i+1].album.id) {　//アルバムが重複している場合に統合
+    if(releases[i].album[0].id == releases[i+1].album[0].id) {　//アルバムが重複している場合に統合
       releases[i].artist = releases[i].artist.concat(releases[i+1].artist);
+      releases[i].artist.sort();
       releases.splice(i+1,1);
       l -=1; //要素数に合わせてlを1減らす
       i -=1; //3枚以上のアルバム重複に対応
@@ -143,7 +144,7 @@ function arrangeNewRelease(releases) {
   });
   var l = releases.length;
   for(let i = 0;i <= l-2; i++) {
-    if(releases[i].artist == releases[i+1].artist) {　//アーティストが重複している場合に統合
+    if(releases[i].artist.toString() == releases[i+1].artist.toString()) {　//アーティストが重複している場合に統合
       releases[i].album = releases[i].album.concat(releases[i+1].album);
       releases.splice(i+1,1);
       l -=1; //要素数に合わせてlを1減らす
@@ -155,23 +156,22 @@ function arrangeNewRelease(releases) {
   return releases;
 }
 
+
 //アーティスト名を取得する
 function getArtistName(artistIds) {
   var nameDic = {};
   var ids = [];
-  var names = [];
-  var count = 0;
-  do {
-    count += 50;
-    ids = artistIds.slice(count-50,count).join();
-    const response = spotifyAPI("https://api.spotify.com/v1/artists?ids=" + ids,"GET","");
+  for( let count = 0; count <= artistIds.length-1; count+= 50) {
+    ids = artistIds.slice(count,count+50);
+    Logger.log("artist ids=%s",ids);
+    const response = spotifyAPI("https://api.spotify.com/v1/artists?ids=" + ids.join(),"GET","");
     var l = response.artists.length;
-    for (let i = 0; i <= l; i++) {
-      nameDic[ids[i]] = response.artists.name;
+    for (let i = 0; i <= l-1; i++) {
+      nameDic[ids[i]] = response.artists[i].name;
     }
-  } while (count <= artistIds.length-1);
+  } 
   Logger.log("ArtistName got.");
-  Logger.log(names);
+  Logger.log(nameDic);
   return nameDic;
 }
 
@@ -179,19 +179,18 @@ function getArtistName(artistIds) {
 function getAlbumName(albumIds) {
   var nameDic = {};
   var ids = [];
-  var names = [];
-  var count = 0;
-  do {
-    count += 50;
-    ids = albumIds.slice(count-50,count).join();
-    const response = spotifyAPI("https://api.spotify.com/v1/albums?market=JP&ids=" + ids,"GET","");
+  for(let count = 0; count <= albumIds.length-1; count += 50) {
+    ids = albumIds.slice(count,count+50);
+    Logger.log("album ids=%s",ids);
+    const response = spotifyAPI("https://api.spotify.com/v1/albums?market=JP&ids=" + ids.join(),"GET","");
     var l = response.albums.length;
-    for (let i = 0; i <= l; i++) {
-      nameDic[ids[i]] = response.albums.name;
+    Logger.log("ids.length == response.album.length " + ids.length == response.albums.length);
+    for (let i = 0; i <= l-1; i++) {
+      nameDic[ids[i]] = response.albums[i].name;
     }
-  } while (count <= albumIds.length-1);
+  }
   Logger.log("AlbumName got.");
-  Logger.log(names);
+  Logger.log(nameDic);
   return nameDic;
 }
 
@@ -211,20 +210,28 @@ function sendmail(newRelease) {
   var artistIds = [];
   var albumIds = [];
   newRelease.forEach(function(release) {
-    artistIds.concat(release.artist);
-    albumIds.concat(release.album);
+    Logger.log(release,release.artist,release.album);
+    artistIds = artistIds.concat(release.artist);
+    var albumtemp = [];
+    release.album.forEach(alb => albumtemp.push(alb.id));
+    albumIds = albumIds.concat(albumtemp);
   });
+  Logger.log("artistIds=%s",artistIds);
+  Logger.log("albumIds=%s",albumIds);
   const artistNameDic = getArtistName(artistIds);
   const albumNameDic = getAlbumName(albumIds);
   var description = "";
   newRelease.forEach(function(release) {
+    Logger.log("release:%s",release);
     var artists = [];
     var albums = [];
     var images = "";
     release.artist.forEach(art => artists.push(artistNameDic[art]));
-    release.album.id.forEach(albId => albums.push(albumNameDic[albId]));
-    release.album.forEach(alb => images += "<a href='https://open.spotify.com/album/" + alb.id + "'><img src='" + alb.imageUrl + "' style='width:30%;'></a>");
-    description += "<br>" + artists.join() + "の『" + albums.join("』,『") + "』<br><div style='float:left;'>" + images + "</div>";
+    release.album.forEach(function(alb) {
+      albums.push(albumNameDic[alb.id]);
+      images += "<a href='https://open.spotify.com/album/" + alb.id + "'><img src='" + alb.imageUrl + "' style='width:30%;'></a>";
+    });
+    description += "<br><div>" + artists.join() + "の『" + albums.join("』,『") + "』<br><div>" + images + "</div></div>";
   });
   
   const html = HtmlService.createTemplateFromFile('main');
@@ -232,4 +239,10 @@ function sendmail(newRelease) {
   const output = html.evaluate().append(description).getContent();
   
   MailApp.sendEmail(recipient, subject, body, {htmlBody:output});
+}
+
+function test() {
+  var s = [{"album":[{"imageUrl":"https://i.scdn.co/image/ab67616d00001e02f93df55cc535d03c96ff839d", "id":"3PU4sh4IH8Yq6pNOFyg3uU"}], "artist":["01wau5CL3Z1vfJJWkzBkqg"]}, {"artist":["01wau5CL3Z1vfJJWkzBkqg"], "album":[{"imageUrl":"https://i.scdn.co/image/ab67616d00001e02ab270eadcc19834ac154754b", "id":"53TLN8luTvwC1SBmKrpCPW"}]}, {"artist":["01wau5CL3Z1vfJJWkzBkqg"], "album":[{"id":"5dRPm82izRq6HNFZjD52Gn", "imageUrl":"https://i.scdn.co/image/ab67616d00001e0228632ba61e941859036df5c5"}]}, {"artist":["01wau5CL3Z1vfJJWkzBkqg"], "album":[{"imageUrl":"https://i.scdn.co/image/ab67616d00001e025277053373c137660f3e1fea", "id":"38gVtgLPf4zqgj1pXVQTWZ"}]}, {"album":[{"id":"5M5mAXnvCkIpgcbeVA580G", "imageUrl":"https://i.scdn.co/image/ab67616d00001e02f2c49a6abf3e339255748a7a"}], "artist":["06jSjpC81wzjoUoE61Fhdn"]}, {"album":[{"id":"3wOvVbJZmZCwVeGVxbybCD", "imageUrl":"https://i.scdn.co/image/ab67616d00001e02b7f26d90024b6c6625a61de8"}], "artist":["0Hcp1DNbF9TUAyemgvXDYr"]}, {"artist":["0pWR7TsFhvSCnbmHDjWgrE"], "album":[{"imageUrl":"https://i.scdn.co/image/ab67616d00001e0247a7361cd4f1e7a69a25c411", "id":"6LQi6ci1HwmgbHzgpQh22x"}]}, {"album":[{"id":"6jlCg2NlxEYQCstykUpPdP", "imageUrl":"https://i.scdn.co/image/ab67616d00001e020971dc823534309a9e35909d"}], "artist":["115IWAVy4OTxhE0xdDef1c"]}]
+  const arrangedRelease = arrangeNewRelease(s);
+  sendmail(arrangedRelease);
 }
