@@ -1,13 +1,13 @@
+const sheetId = PropertiesService.getScriptProperties().getProperty("sheetId");
+const SS = SpreadsheetApp.openById(sheetId);
+const sheet = SS.getSheets()[0];
+
 function main() {
   refreshToken();
   const artists = getFollow();
   const newRelease = getAlbums(artists);
   const arrangedRelease = arrangeNewRelease(newRelease);
-  if (arrangedRelease) {
-    sendmail(arrangedRelease);
-  } else {
-    sendmail("");
-  }
+  sendmail(arrangedRelease);
 }
 
 //APIをぶっ叩く
@@ -179,8 +179,8 @@ function getArtistName(artistIds) {
 function getAlbumName(albumIds) {
   var nameDic = {};
   var ids = [];
-  for(let count = 0; count <= albumIds.length-1; count += 50) {
-    ids = albumIds.slice(count,count+50);
+  for(let count = 0; count <= albumIds.length-1; count += 20) {
+    ids = albumIds.slice(count,count+20);
     Logger.log("album ids=%s",ids);
     const response = spotifyAPI("https://api.spotify.com/v1/albums?market=JP&ids=" + ids.join(),"GET","");
     var l = response.albums.length;
@@ -201,16 +201,16 @@ function sendmail(newRelease) {
   const subject = "Spotify通知";
   const body = "NewRelease";
   
-  if (!newRelease) {
+  if (newRelease.length == 0) {
     const message = "本日のニューリリースはありません。";
     Logger.log(message);
     MailApp.sendEmail(recipient, subject, message);
     return;
   }
+  
   var artistIds = [];
   var albumIds = [];
   newRelease.forEach(function(release) {
-    Logger.log(release,release.artist,release.album);
     artistIds = artistIds.concat(release.artist);
     var albumtemp = [];
     release.album.forEach(alb => albumtemp.push(alb.id));
@@ -222,7 +222,6 @@ function sendmail(newRelease) {
   const albumNameDic = getAlbumName(albumIds);
   var description = "";
   newRelease.forEach(function(release) {
-    Logger.log("release:%s",release);
     var artists = [];
     var albums = [];
     var images = "";
@@ -238,11 +237,20 @@ function sendmail(newRelease) {
   html.date = Utilities.formatDate(new Date(), "JST", "yyyy-MM-dd");
   const output = html.evaluate().append(description).getContent();
   
+  var last = sheet.getLastRow();
+  sheet.getRange(last+1,1).setValue(output);
+  
   MailApp.sendEmail(recipient, subject, body, {htmlBody:output});
 }
 
-function test() {
-  var s = [{"album":[{"imageUrl":"https://i.scdn.co/image/ab67616d00001e02f93df55cc535d03c96ff839d", "id":"3PU4sh4IH8Yq6pNOFyg3uU"}], "artist":["01wau5CL3Z1vfJJWkzBkqg"]}, {"artist":["01wau5CL3Z1vfJJWkzBkqg"], "album":[{"imageUrl":"https://i.scdn.co/image/ab67616d00001e02ab270eadcc19834ac154754b", "id":"53TLN8luTvwC1SBmKrpCPW"}]}, {"artist":["01wau5CL3Z1vfJJWkzBkqg"], "album":[{"id":"5dRPm82izRq6HNFZjD52Gn", "imageUrl":"https://i.scdn.co/image/ab67616d00001e0228632ba61e941859036df5c5"}]}, {"artist":["01wau5CL3Z1vfJJWkzBkqg"], "album":[{"imageUrl":"https://i.scdn.co/image/ab67616d00001e025277053373c137660f3e1fea", "id":"38gVtgLPf4zqgj1pXVQTWZ"}]}, {"album":[{"id":"5M5mAXnvCkIpgcbeVA580G", "imageUrl":"https://i.scdn.co/image/ab67616d00001e02f2c49a6abf3e339255748a7a"}], "artist":["06jSjpC81wzjoUoE61Fhdn"]}, {"album":[{"id":"3wOvVbJZmZCwVeGVxbybCD", "imageUrl":"https://i.scdn.co/image/ab67616d00001e02b7f26d90024b6c6625a61de8"}], "artist":["0Hcp1DNbF9TUAyemgvXDYr"]}, {"artist":["0pWR7TsFhvSCnbmHDjWgrE"], "album":[{"imageUrl":"https://i.scdn.co/image/ab67616d00001e0247a7361cd4f1e7a69a25c411", "id":"6LQi6ci1HwmgbHzgpQh22x"}]}, {"album":[{"id":"6jlCg2NlxEYQCstykUpPdP", "imageUrl":"https://i.scdn.co/image/ab67616d00001e020971dc823534309a9e35909d"}], "artist":["115IWAVy4OTxhE0xdDef1c"]}]
-  const arrangedRelease = arrangeNewRelease(s);
-  sendmail(arrangedRelease);
+function doGet(e) {
+  var last = sheet.getLastRow();
+  var data = sheet.getRange(1,1,last).getValues();
+  var html = "";
+  var l = data.length;
+  for(let i = l-1;i >= 0; i-- ) { //新しい順に表示
+    html += data[i][0] + "<br>";
+  }
+  var output = HtmlService.createHtmlOutput(html).setTitle("ニューリリース");
+  return output;
 }
